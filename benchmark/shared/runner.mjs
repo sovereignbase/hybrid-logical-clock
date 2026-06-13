@@ -1,4 +1,4 @@
-export async function runBenchmarks(drivers) {
+export async function runBenchmarks(drivers, options = {}) {
   const results = []
 
   for (const driver of drivers) {
@@ -6,7 +6,24 @@ export async function runBenchmarks(drivers) {
     results.push(result)
   }
 
+  if (options.json) {
+    console.log(
+      JSON.stringify(
+        {
+          node: process.version,
+          platform: process.platform,
+          arch: process.arch,
+          rows: results,
+        },
+        null,
+        2
+      )
+    )
+    return results
+  }
+
   printResults(results)
+  return results
 }
 
 function printResults(results) {

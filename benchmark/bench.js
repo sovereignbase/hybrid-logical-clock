@@ -13,18 +13,21 @@ import { run as compatibilityRuntimeSupport } from './compatibility/runtime-supp
 import { run as compatibilityStandardsSupport } from './compatibility/standards-support/driver.mjs'
 import { run as licensingLicenseFit } from './licensing/license-fit/driver.mjs'
 
-await runBenchmarks([
-  performanceThroughput,
-  performanceLatency,
-  efficiencyMemoryUse,
-  efficiencyStorageUse,
-  efficiencyCpuUse,
-  sizeBundleSize,
-  sizeDependencyWeight,
-  scalabilityComplexityGrowth,
-  reliabilityCorrectness,
-  reliabilityErrorHandling,
-  compatibilityRuntimeSupport,
-  compatibilityStandardsSupport,
-  licensingLicenseFit,
-])
+await runBenchmarks(
+  [
+    performanceThroughput,
+    performanceLatency,
+    efficiencyMemoryUse,
+    efficiencyStorageUse,
+    efficiencyCpuUse,
+    sizeBundleSize,
+    sizeDependencyWeight,
+    scalabilityComplexityGrowth,
+    reliabilityCorrectness,
+    reliabilityErrorHandling,
+    compatibilityRuntimeSupport,
+    compatibilityStandardsSupport,
+    licensingLicenseFit,
+  ],
+  { json: process.argv.includes('--json') }
+)
