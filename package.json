@@ -1,7 +1,7 @@
 {
   "type": "module",
   "license": "Apache-2.0",
-  "name": "@sovereignbase/package-name",
+  "name": "@sovereignbase/hybrid-logical-clock",
   "version": "0.0.0",
   "description": "",
   "keywords": [
@@ -68,10 +68,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sovereignbase/package-name.git"
+    "url": "git+https://github.com/sovereignbase/hybrid-logical-clock.git"
   },
   "bugs": {
-    "url": "https://github.com/sovereignbase/package-name/issues"
+    "url": "https://github.com/sovereignbase/hybrid-logical-clock/issues"
   },
-  "homepage": "https://sovereignbase.dev/package-name"
+  "homepage": "https://sovereignbase.dev/hybrid-logical-clock"
 }
