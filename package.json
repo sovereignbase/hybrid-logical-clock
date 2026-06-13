@@ -5,6 +5,17 @@
   "version": "0.0.0",
   "description": "A timestamp model for ordering events without relying on wall-clock time.",
   "keywords": [
+    "hybrid-logical-clock",
+    "hlc",
+    "logical-clock",
+    "logical-time",
+    "event-ordering",
+    "causal-ordering",
+    "timestamp",
+    "uuidv7",
+    "distributed-systems",
+    "crdt",
+    "replication",
     "typescript",
     "sovereignbase"
   ],
