@@ -2,7 +2,7 @@
   "type": "module",
   "license": "Apache-2.0",
   "name": "@sovereignbase/hybrid-logical-clock",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "A timestamp model for ordering events without relying on wall-clock time.",
   "keywords": [
     "hybrid-logical-clock",
