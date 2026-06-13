@@ -26,7 +26,8 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/') pathname = '/runsInBrowsers/index.html'
 
   let filePath
-  if (pathname.startsWith('/dist/')) filePath = safeResolve(root, pathname)
+  if (pathname.startsWith('/dist/') || pathname.startsWith('/node_modules/'))
+    filePath = safeResolve(root, pathname)
   else filePath = safeResolve(testRoot, pathname)
 
   if (!filePath) {
@@ -51,7 +52,7 @@ const server = http.createServer(async (req, res) => {
 
 const port = Number.parseInt(process.env.PORT || '4173', 10)
 server.listen(port, '127.0.0.1', () => {
-  console.log(`bytecodec test server running at http://127.0.0.1:${port}`)
+  console.log(`HLC test server running at http://127.0.0.1:${port}`)
 })
 
 function shutdown() {

@@ -1,35 +1,21 @@
-const TEST_TIMEOUT_MS = 5000
-const COMPRESS_TIMEOUT_MS = 1500
+const UINT32_MAX = 0xffffffff
+const UINT32_SIZE = 0x100000000
 
-export async function runBytecodecSuite(api, options = {}) {
+export function runHLCSuite(api, options = {}) {
   const { label = 'runtime' } = options
-  const runtimeGlobals = options.runtimeGlobals ?? globalThis
   const results = { label, ok: true, errors: [], tests: [] }
-  /** update to current package */
-  const {
-    Bytes,
-    concat,
-    equals,
-    fromBase64String,
-    fromBase64UrlString,
-    fromCompressed,
-    fromBigInt,
-    fromHex,
-    fromJSON,
-    fromString,
-    fromZ85String,
-    toArrayBuffer,
-    toBase64String,
-    toBase64UrlString,
-    toBigInt,
-    toBufferSource,
-    toCompressed,
-    toHex,
-    toJSON,
-    toString,
-    toUint8Array,
-    toZ85String,
-  } = api
+  const { CLOCK_START, HLC } = api
+
+  function runTest(name, fn) {
+    try {
+      fn()
+      results.tests.push({ name, ok: true })
+    } catch (error) {
+      results.ok = false
+      results.tests.push({ name, ok: false })
+      results.errors.push({ name, message: String(error) })
+    }
+  }
 
   function assert(condition, message) {
     if (!condition) throw new Error(message || 'assertion failed')
@@ -41,348 +27,233 @@ export async function runBytecodecSuite(api, options = {}) {
   }
 
   function assertArrayEqual(actual, expected, message) {
-    const actualArray = Array.from(actual)
-    if (actualArray.length !== expected.length)
-      throw new Error(message || 'array length mismatch')
-    for (let index = 0; index < expected.length; index++) {
-      if (actualArray[index] !== expected[index])
-        throw new Error(message || 'array content mismatch')
+    assert(Array.isArray(actual), message || 'expected array')
+    assertEqual(actual.length, expected.length, message || 'array length')
+    for (let index = 0; index < expected.length; index++)
+      assertEqual(actual[index], expected[index], message || 'array item')
+  }
+
+  function assertTimestampShape(timestamp, message) {
+    assert(Array.isArray(timestamp), message || 'timestamp must be array')
+    assertEqual(timestamp.length, 4, message || 'timestamp lane count')
+    for (const lane of timestamp) {
+      assert(Number.isInteger(lane), message || 'lane must be integer')
+      assert(lane >= 0, message || 'lane must be unsigned')
+      assert(lane <= UINT32_MAX, message || 'lane must be uint32')
     }
   }
 
-  function assertJsonEqual(actual, expected, message) {
+  function addUint128(timestamp, advancement) {
+    const next = timestamp.slice()
+    let carry = advancement
+    for (let index = 3; index >= 0; index--) {
+      const sum = next[index] + carry
+      next[index] = sum >>> 0
+      carry = Math.floor(sum / UINT32_SIZE)
+    }
+    return next
+  }
+
+  runTest('exports CLOCK_START and HLC', () => {
+    assertEqual(CLOCK_START, 0, 'CLOCK_START sentinel')
+    assertEqual(typeof HLC, 'function', 'HLC export')
+  })
+
+  runTest('constructor creates four unsigned 32-bit lanes', () => {
+    const clock = new HLC()
+    assertTimestampShape(clock.time)
+  })
+
+  runTest('clock instances do not share timestamp arrays', () => {
+    const left = new HLC()
+    const right = new HLC()
+    const rightBefore = right.time.slice()
+    assert(left.time !== right.time, 'time arrays must be independent')
+    left.tick(10)
+    assertArrayEqual(right.time, rightBefore)
+  })
+
+  runTest('tick defaults to advancing one from CLOCK_START', () => {
+    const clock = new HLC()
+    const before = clock.time.slice()
+    const timestamp = clock.tick()
+    assertEqual(timestamp[0], CLOCK_START)
+    assertArrayEqual(timestamp[1], addUint128(before, 1))
+    assertArrayEqual(clock.time, timestamp[1])
+  })
+
+  runTest('tick accepts explicit previous timestamp', () => {
+    const clock = new HLC()
+    const first = clock.tick()
+    const second = clock.tick(1, first[1])
+    assertArrayEqual(second[0], first[1])
+    assertArrayEqual(second[1], addUint128(first[1], 1))
+  })
+
+  runTest('tick returns stable copies', () => {
+    const clock = new HLC()
+    const first = clock.tick()
+    const firstValue = first[1].slice()
+    clock.tick(100, first[1])
+    assertArrayEqual(first[1], firstValue)
+    assert(first[1] !== clock.time, 'returned timestamp must be copied')
+  })
+
+  runTest('tick carries overflow from lane 4 to lane 3', () => {
+    const clock = new HLC()
+    clock.time[0] = 1
+    clock.time[1] = 2
+    clock.time[2] = 3
+    clock.time[3] = UINT32_MAX
+    assertArrayEqual(clock.tick(1)[1], [1, 2, 4, 0])
+  })
+
+  runTest('tick carries overflow across every lane', () => {
+    const clock = new HLC()
+    clock.time[0] = 9
+    clock.time[1] = UINT32_MAX
+    clock.time[2] = UINT32_MAX
+    clock.time[3] = UINT32_MAX
+    assertArrayEqual(clock.tick(1)[1], [10, 0, 0, 0])
+  })
+
+  runTest('tick supports larger bounded advancements', () => {
+    const clock = new HLC()
+    clock.time[0] = 0
+    clock.time[1] = 0
+    clock.time[2] = 7
+    clock.time[3] = UINT32_MAX - 4
+    assertArrayEqual(clock.tick(10)[1], [0, 0, 8, 5])
+  })
+
+  runTest('sequential ticks are strictly increasing', () => {
+    const clock = new HLC()
+    let previous = clock.tick()
+    for (let index = 0; index < 128; index++) {
+      const next = clock.tick(1, previous[1])
+      assertEqual(clock.compare(previous, next), -1)
+      previous = next
+    }
+  })
+
+  runTest('compare orders by current timestamp only', () => {
+    const clock = new HLC()
+    const left = [
+      [99, 99, 99, 99],
+      [1, 0, 0, 0],
+    ]
+    const right = [CLOCK_START, [1, 0, 0, 1]]
+    assertEqual(clock.compare(left, right), -1)
+    assertEqual(clock.compare(right, left), 1)
+    assertEqual(clock.compare(left, [CLOCK_START, [1, 0, 0, 0]]), 0)
+  })
+
+  runTest('compare checks lanes from most to least significant', () => {
+    const clock = new HLC()
+    const cases = [
+      [
+        [0, 0, 0, 1],
+        [1, 0, 0, 0],
+      ],
+      [
+        [1, 0, 0, 1],
+        [1, 1, 0, 0],
+      ],
+      [
+        [1, 1, 0, 1],
+        [1, 1, 1, 0],
+      ],
+      [
+        [1, 1, 1, 0],
+        [1, 1, 1, 1],
+      ],
+    ]
+    for (const [left, right] of cases)
+      assertEqual(clock.compare([CLOCK_START, left], [CLOCK_START, right]), -1)
+  })
+
+  runTest('validate accepts CLOCK_START-linked timestamps', () => {
+    assertEqual(new HLC().validate([CLOCK_START, [0, 1, 2, 3]]), true)
+  })
+
+  runTest('validate accepts timestamp-linked timestamps', () => {
     assertEqual(
-      JSON.stringify(actual),
-      JSON.stringify(expected),
-      message || 'json mismatch'
+      new HLC().validate([
+        [0, 1, 2, 3],
+        [4, 5, 6, 7],
+      ]),
+      true
     )
-  }
+  })
 
-  function assertThrows(fn, match) {
-    let threw = false
-    try {
-      fn()
-    } catch (error) {
-      threw = true
-      if (match && !match.test(String(error))) throw error
-    }
-    if (!threw) throw new Error('expected function to throw')
-  }
-
-  async function assertRejects(fn, match) {
-    let threw = false
-    try {
-      await fn()
-    } catch (error) {
-      threw = true
-      if (match && !match.test(String(error))) throw error
-    }
-    if (!threw) throw new Error('expected promise to reject')
-  }
-
-  async function withTimeout(promise, ms, name) {
-    let timer
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        reject(new Error(`timeout after ${ms}ms${name ? `: ${name}` : ''}`))
-      }, ms)
-    })
-    return Promise.race([promise.finally(() => clearTimeout(timer)), timeout])
-  }
-
-  async function runTest(name, fn) {
-    try {
-      await withTimeout(Promise.resolve().then(fn), TEST_TIMEOUT_MS, name)
-      results.tests.push({ name, ok: true })
-    } catch (error) {
-      results.ok = false
-      results.tests.push({ name, ok: false })
-      results.errors.push({ name, message: String(error) })
-    }
-  }
-
-  function isNodeLikeRuntime() {
-    return (
-      typeof runtimeGlobals.process !== 'undefined' &&
-      !!runtimeGlobals.process?.versions?.node
+  runTest('validate accepts uint32 boundary values', () => {
+    assertEqual(
+      new HLC().validate([
+        [0, UINT32_MAX, 1, UINT32_MAX],
+        [UINT32_MAX, 0, UINT32_MAX, 0],
+      ]),
+      true
     )
-  }
-
-  const base64Payload = Uint8Array.from([104, 101, 108, 108, 111])
-  const utf8Text = 'h\u00e9llo \u2713 rocket \ud83d\ude80'
-  const jsonValue = { ok: true, count: 3, list: ['x', { y: 1 }], nil: null }
-  const compressionPayload = fromString('compress me please')
-
-  await runTest('exports shape', () => {
-    assert(typeof Bytes === 'function', 'Bytes export missing')
-    for (const fn of [
-      fromBase64String,
-      toBase64String,
-      fromBase64UrlString,
-      toBase64UrlString,
-      fromHex,
-      toHex,
-      fromZ85String,
-      toZ85String,
-      fromString,
-      toString,
-      fromBigInt,
-      toBigInt,
-      fromJSON,
-      toJSON,
-      toCompressed,
-      fromCompressed,
-      toBufferSource,
-      toArrayBuffer,
-      toUint8Array,
-      concat,
-      equals,
-    ]) {
-      assert(typeof fn === 'function', 'expected function export')
-    }
   })
 
-  await runTest('toBase64String', () => {
-    const encoded = toBase64String(base64Payload)
-    assertEqual(encoded, 'aGVsbG8=')
-
-    const view = new DataView(base64Payload.buffer, 1, 3)
-    assertEqual(toBase64String(view), 'ZWxs')
-  })
-
-  await runTest('fromBase64String', () => {
-    const decoded = fromBase64String('aGVsbG8=')
-    assertArrayEqual(decoded, base64Payload)
-  })
-
-  await runTest('toBase64UrlString', () => {
-    const encoded = toBase64UrlString(base64Payload)
-    assertEqual(encoded, 'aGVsbG8')
-  })
-
-  await runTest('fromBase64UrlString', () => {
-    const decoded = fromBase64UrlString('aGVsbG8')
-    assertArrayEqual(decoded, base64Payload)
-    assertThrows(() => fromBase64UrlString('a'), /Invalid base64url length/)
-  })
-
-  await runTest('toHex', () => {
-    assertEqual(toHex(base64Payload), '68656c6c6f')
-
-    const view = new DataView(base64Payload.buffer, 1, 3)
-    assertEqual(toHex(view), '656c6c')
-  })
-
-  await runTest('fromHex', () => {
-    const decoded = fromHex('68656C6C6F')
-    assertArrayEqual(decoded, base64Payload)
-    assertThrows(() => fromHex('6g'), /Invalid hex character at index 1/)
-  })
-
-  await runTest('toZ85String', () => {
-    const payload = Uint8Array.from([
-      0x86, 0x4f, 0xd2, 0x6f, 0xb5, 0x59, 0xf7, 0x5b,
+  runTest('validate rejects malformed tuple shapes', () => {
+    const clock = new HLC()
+    for (const value of [
+      null,
+      undefined,
+      1,
+      'timestamp',
+      {},
+      [],
+      [CLOCK_START],
+      [CLOCK_START, [1, 2, 3, 4], []],
     ])
-    assertEqual(toZ85String(payload), 'HelloWorld')
-    assertThrows(
-      () => toZ85String(base64Payload),
-      /Z85 input length must be divisible by 4/
-    )
+      assertEqual(clock.validate(value), false)
   })
 
-  await runTest('fromZ85String', () => {
-    const decoded = fromZ85String('HelloWorld')
-    assertArrayEqual(decoded, [0x86, 0x4f, 0xd2, 0x6f, 0xb5, 0x59, 0xf7, 0x5b])
-    assertThrows(
-      () => fromZ85String('Hell~'),
-      /Invalid Z85 character at index 4/
-    )
+  runTest('validate rejects malformed previous timestamps', () => {
+    const clock = new HLC()
+    for (const previous of [
+      [1, 2, 3],
+      [1, 2, 3, 4, 5],
+      -1,
+      '0',
+      {},
+      [1, 2, 3, -1],
+      [1, 2, 3, UINT32_SIZE],
+    ])
+      assertEqual(clock.validate([previous, [1, 2, 3, 4]]), false)
   })
 
-  await runTest('fromString', () => {
-    const bytes = fromString(utf8Text)
-    assertEqual(toString(bytes), utf8Text)
+  runTest('validate rejects malformed current timestamps', () => {
+    const clock = new HLC()
+    for (const current of [
+      [1, 2, 3],
+      [1, 2, 3, 4, 5],
+      -1,
+      '0',
+      {},
+      [1, 2, 3, -1],
+      [1, 2, 3, UINT32_SIZE],
+    ])
+      assertEqual(clock.validate([CLOCK_START, current]), false)
   })
 
-  await runTest('toString', () => {
-    const ascii = fromString('abcd')
-    const text = toString(ascii)
-    assertEqual(text, 'abcd')
-
-    const bytes = fromString(utf8Text)
-    assertEqual(toString(bytes), utf8Text)
-
-    const view = new DataView(ascii.buffer, 1, 2)
-    assertEqual(toString(view), 'bc')
+  runTest('validate rejects non-integer numeric lanes', () => {
+    const clock = new HLC()
+    for (const lane of [NaN, Infinity, -Infinity, 1.5])
+      assertEqual(clock.validate([CLOCK_START, [0, 0, 0, lane]]), false)
   })
 
-  await runTest('bigint helpers', () => {
-    const value = 0x1234567890abcdefn
-    const encoded = fromBigInt(value)
-    assertArrayEqual(encoded, [0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef])
-    assertEqual(toBigInt(encoded), value)
-    assertEqual(toBigInt([]), 0n)
-    assertThrows(() => fromBigInt(-1n), /expects an unsigned bigint/)
-  })
-
-  await runTest('fromJSON', () => {
-    const bytes = fromJSON(jsonValue)
-    assertJsonEqual(toJSON(bytes), jsonValue)
-  })
-
-  await runTest('toJSON', () => {
-    assertJsonEqual(
-      toJSON('{"ok":true,"count":3,"list":["x",{"y":1}],"nil":null}'),
-      jsonValue
-    )
-  })
-
-  await runTest('toUint8Array', () => {
-    const source = new Uint8Array([10, 20, 30, 40])
-    const view = new DataView(source.buffer, 1, 2)
-    const normalized = toUint8Array(view)
-    source[1] = 99
-    source[2] = 88
-
-    assertArrayEqual(normalized, [20, 30])
-  })
-
-  await runTest('toArrayBuffer', () => {
-    const source = new Uint8Array([10, 20, 30, 40])
-    const view = new DataView(source.buffer, 1, 2)
-    const copiedBuffer = toArrayBuffer(view)
-    source[1] = 99
-    source[2] = 88
-    assertArrayEqual(new Uint8Array(copiedBuffer), [20, 30])
-  })
-
-  await runTest('toBufferSource', () => {
-    const source = new Uint8Array([10, 20, 30, 40])
-    const view = new DataView(source.buffer, 1, 2)
-    const bufferSource = toBufferSource(view)
-    source[1] = 99
-    source[2] = 88
-    assert(ArrayBuffer.isView(bufferSource), 'expected ArrayBufferView')
-    assertArrayEqual(bufferSource, [20, 30])
-  })
-
-  await runTest('SharedArrayBuffer support', () => {
-    const SharedArrayBufferCtor = runtimeGlobals.SharedArrayBuffer
-    if (typeof SharedArrayBufferCtor === 'undefined') return
-    const shared = new SharedArrayBufferCtor(4)
-    const view = new Uint8Array(shared)
-    view.set([5, 6, 7, 8])
-    const normalized = toUint8Array(shared)
-    const copiedBuffer = toArrayBuffer(shared)
-    const copiedSource = toBufferSource(shared)
-    view[1] = 99
-    assertArrayEqual(normalized, [5, 6, 7, 8])
-    assertArrayEqual(new Uint8Array(copiedBuffer), [5, 6, 7, 8])
-    assertArrayEqual(copiedSource, [5, 6, 7, 8])
-  })
-
-  await runTest('concat', () => {
-    const left = Uint8Array.from([1, 2, 3])
-    const right = [4, 5]
-    const buffer = new Uint8Array([6, 7]).buffer
-    const view = new DataView(new Uint8Array([8, 9, 10, 11]).buffer, 1, 2)
-
-    const merged = concat([left, right, buffer, view])
-    assertArrayEqual(merged, [1, 2, 3, 4, 5, 6, 7, 9, 10])
-  })
-
-  await runTest('equals', () => {
-    const merged = Uint8Array.from([1, 2, 3, 4, 5, 6, 7, 9, 10])
-    assertEqual(equals(merged, merged.slice()), true)
-    assertEqual(equals(merged, [1, 2, 3]), false)
-  })
-
-  await runTest('toCompressed', async () => {
-    const nodeLike = isNodeLikeRuntime()
-
-    if (!nodeLike && typeof runtimeGlobals.CompressionStream === 'undefined') {
-      await assertRejects(
-        () => toCompressed(compressionPayload),
-        /gzip compression not available/
-      )
-      return
+  runTest('generated chains validate every link', () => {
+    const clock = new HLC()
+    let previous = CLOCK_START
+    for (let index = 0; index < 64; index++) {
+      const timestamp = clock.tick(index + 1, previous)
+      assertEqual(clock.validate(timestamp), true)
+      if (previous !== CLOCK_START) assertArrayEqual(timestamp[0], previous)
+      previous = timestamp[1]
     }
-
-    const compressed = await withTimeout(
-      toCompressed(compressionPayload),
-      COMPRESS_TIMEOUT_MS,
-      'toCompressed'
-    )
-    assert(compressed instanceof Uint8Array, 'expected Uint8Array result')
-    assert(compressed.length > 0, 'expected compressed bytes')
-  })
-
-  await runTest('fromCompressed', async () => {
-    const nodeLike = isNodeLikeRuntime()
-
-    if (!nodeLike && typeof runtimeGlobals.CompressionStream === 'undefined') {
-      await assertRejects(
-        () => toCompressed(compressionPayload),
-        /gzip compression not available/
-      )
-      return
-    }
-
-    const compressed = await withTimeout(
-      toCompressed(compressionPayload),
-      COMPRESS_TIMEOUT_MS,
-      'toCompressed for fromCompressed'
-    )
-
-    if (
-      !nodeLike &&
-      typeof runtimeGlobals.DecompressionStream === 'undefined'
-    ) {
-      await assertRejects(
-        () => fromCompressed(compressed),
-        /gzip decompression not available/
-      )
-      return
-    }
-
-    const restored = await withTimeout(
-      fromCompressed(compressed),
-      COMPRESS_TIMEOUT_MS,
-      'fromCompressed'
-    )
-    assertArrayEqual(restored, compressionPayload)
-  })
-
-  await runTest('Bytes wrapper', async () => {
-    const payload = Uint8Array.from([1, 2, 3, 4])
-
-    const base64 = Bytes.toBase64String(payload)
-    assertEqual(base64, 'AQIDBA==')
-    assertArrayEqual(Bytes.fromBase64String(base64), [1, 2, 3, 4])
-
-    const encoded = Bytes.toBase64UrlString(payload)
-    assertArrayEqual(Bytes.fromBase64UrlString(encoded), [1, 2, 3, 4])
-
-    const hex = Bytes.toHex(payload)
-    assertEqual(hex, '01020304')
-    assertArrayEqual(Bytes.fromHex(hex), [1, 2, 3, 4])
-
-    const z85 = Bytes.toZ85String(payload)
-    assertArrayEqual(Bytes.fromZ85String(z85), [1, 2, 3, 4])
-
-    const text = 'bytes wrapper'
-    assertEqual(Bytes.toString(Bytes.fromString(text)), text)
-
-    const bigint = 0x01020304n
-    assertArrayEqual(Bytes.fromBigInt(bigint), [1, 2, 3, 4])
-    assertEqual(Bytes.toBigInt(payload), bigint)
-
-    const value = { wrapper: true, items: [1, 2, 3] }
-    assertJsonEqual(Bytes.toJSON(Bytes.fromJSON(value)), value)
-
-    const joined = Bytes.concat([payload, [5, 6]])
-    assertArrayEqual(joined, [1, 2, 3, 4, 5, 6])
-    assertEqual(Bytes.equals(payload, [1, 2, 3, 4]), true)
   })
 
   return results

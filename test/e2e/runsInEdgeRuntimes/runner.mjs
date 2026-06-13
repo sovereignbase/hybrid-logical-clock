@@ -1,22 +1,17 @@
-import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { EdgeRuntime } from 'edge-runtime'
-import {
-  ensurePassing,
-  printResults,
-  runBytecodecSuite,
-} from '../shared/suite.mjs'
+import { rolldown } from 'rolldown'
+import { ensurePassing, printResults, runHLCSuite } from '../shared/suite.mjs'
 
 const root = process.cwd()
 const esmDistPath = resolve(root, 'dist', 'index.js')
-/** update to current package */
 
-function toExecutableEdgeEsm(bundleCode) {
-  if (/\bimport\s+[\s\S]+?\bfrom\b/.test(bundleCode))
-    throw new Error(
-      'edge-runtime esm harness expects a single-file bundled dist/index.js'
-    )
-
+async function createExecutableEdgeEsm() {
+  const bundle = await rolldown({ input: esmDistPath })
+  const { output } = await bundle.generate({ format: 'esm' })
+  const bundleCode = output.find((chunk) => chunk.type === 'chunk')?.code
+  await bundle.close()
+  if (!bundleCode) throw new Error('edge-runtime harness emitted no JS chunk')
   const exportMatch = bundleCode.match(
     /export\s*\{\s*([\s\S]*?)\s*\};\s*(\/\/# sourceMappingURL=.*)?\s*$/
   )
@@ -38,16 +33,15 @@ function toExecutableEdgeEsm(bundleCode) {
   const sourceMapComment = exportMatch[2] ? `${exportMatch[2]}\n` : ''
   return (
     bundleCode.slice(0, exportMatch.index) +
-    `globalThis.__bytecodecEsmExports = {\n  ${exportEntries}\n};\n` +
+    `globalThis.__hlcEsmExports = {\n  ${exportEntries}\n};\n` +
     sourceMapComment
   )
 }
 
 const runtime = new EdgeRuntime()
-const moduleCode = await readFile(esmDistPath, 'utf8')
-runtime.evaluate(toExecutableEdgeEsm(moduleCode))
+runtime.evaluate(await createExecutableEdgeEsm())
 
-const results = await runBytecodecSuite(runtime.context.__bytecodecEsmExports, {
+const results = runHLCSuite(runtime.context.__hlcEsmExports, {
   label: 'edge-runtime esm',
   runtimeGlobals: runtime.context,
 })
