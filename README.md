@@ -71,14 +71,14 @@ Last measured on Node `v24.16.0` (`linux x64`):
 
 | group         | scenario          | result                                                                                    |
 | ------------- | ----------------- | ----------------------------------------------------------------------------------------- |
-| speed         | Throughput        | tick 19,800,758.43 ops/s; compare 64,696,042.47 ops/s; validate 9,615,078.41 ops/s        |
-| speed         | Latency           | construct 3,419.47 ns/op; tick 32.74 ns/op; compare 26.07 ns/op; validate 63.86 ns/op     |
-| cost          | Memory use        | 8.03 MiB heap delta for 50,000 retained timestamps (168.32 B each)                        |
-| cost          | Storage use       | dist 33.05 KiB; package metadata/docs 16.95 KiB                                           |
-| cost          | CPU use           | 20.74 ms CPU for 500,000 ticks (41.47 ns CPU/op)                                          |
+| speed         | Throughput        | tick 19,995,492.22 ops/s; compare 61,235,037.22 ops/s; validate 9,003,219.7 ops/s         |
+| speed         | Latency           | construct 3,251.7 ns/op; tick 39.21 ns/op; compare 26.59 ns/op; validate 66.08 ns/op      |
+| cost          | Memory use        | 8.04 MiB heap delta for 50,000 retained timestamps (168.67 B each)                        |
+| cost          | Storage use       | dist 33.05 KiB; package metadata/docs 17.01 KiB                                           |
+| cost          | CPU use           | 19.68 ms CPU for 500,000 ticks (39.36 ns CPU/op)                                          |
 | size          | Bundle size       | esm 4.18 KiB (1.57 KiB gzip, 469 B min+gzip); cjs 4.37 KiB (1.63 KiB gzip); d.ts 3.38 KiB |
 | size          | Dependency weight | 2 direct production deps; direct package bytes 158.16 KiB; node_modules 568.59 MiB        |
-| growth        | Complexity growth | 187.23 ns/op at 1,000 ticks; 34.7 ns/op at 100,000 ticks; 0.19x ratio                     |
+| growth        | Complexity growth | 107.36 ns/op at 1,000 ticks; 40.47 ns/op at 100,000 ticks; 0.38x ratio                    |
 | checks        | Correctness       | 1999/1999 generated-chain checks passed                                                   |
 | checks        | Error handling    | 9/9 invalid inputs rejected without throwing                                              |
 | compatibility | Runtime support   | esm ok; cjs ok; web primitives 3/3                                                        |
